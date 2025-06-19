@@ -1,0 +1,667 @@
+#include <bits/stdc++.h>
+#include <cuda_runtime.h>
+#include <chrono>
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+#include <thrust/transform.h>
+#include <thrust/sort.h>
+#include <fstream>
+using namespace std;
+typedef long long ll;
+typedef unsigned long long ull;
+#define pb push_back
+
+const int bucketSize = 500; // size of the bucket
+
+// Create 2 classes, one for node and one for tree;
+
+class node {
+public:
+    bool isLeaf;
+    node** ptr;
+    int *key, size;
+    node();
+};
+node::node()
+{
+    key = new int[bucketSize];
+    ptr = new node*[bucketSize + 1]();
+}
+class Btree {
+public:
+    // Root of tree stored here;
+    node* root;
+    Btree();
+    void deleteNode(int);
+
+    int search(int);
+    void display(node*);
+    void insert(int);
+    node* findParent(node*, node*);
+    node* getRoot();
+    void shiftLevel(int, node*, node*);
+    void genLevelArray(node*);
+    void createLevelArray(node*);
+};
+
+node* Btree::getRoot() { return root; }
+Btree::Btree() { root = NULL; }
+
+void Btree::insert(int x)
+{
+    if (root == NULL) {
+        root = new node;
+        root->key[0] = x;
+        root->isLeaf = true;
+        root->size = 1;
+    }
+
+    else {
+        node* current = root;
+        node* parent;
+
+        while (current->isLeaf == false) {
+            parent = current;
+
+            for (int i = 0; i < current->size; i++) {
+                if (x < current->key[i]) {
+                    current = current->ptr[i];
+                    break;
+                }
+
+                if (i == current->size - 1) {
+                    current = current->ptr[i + 1];
+                    break;
+                }
+            }
+        }
+
+        // now we have reached leaf;
+        if (current->size < bucketSize) { // if the node to be inserted is
+                                         // not filled
+            int i = 0;
+
+            // Traverse btree
+            while (x > current->key[i] && i < current->size)
+                // goto pt where needs to be inserted.
+                i++;
+            for (int j = current->size; j > i; j--)
+                // adjust and insert element;
+                current->key[j] = current->key[j - 1];
+
+            current->key[i] = x;
+
+            // size should be increased by 1
+            current->size++;
+
+            current->ptr[current->size] = current->ptr[current->size - 1];
+            current->ptr[current->size - 1] = NULL;
+        }
+
+        // if block does not have enough space;
+        else {
+            node* newLeaf = new node;
+            int tempNode[bucketSize + 1];
+
+            for (int i = 0; i < bucketSize; i++)
+                // all elements of this block stored
+                tempNode[i] = current->key[i];
+            int i = 0;
+
+            // find the right posn of num to be inserted
+            while (x > tempNode[i] && i < bucketSize)
+                i++;
+
+            for (int j = bucketSize + 1; j > i; j--)
+                tempNode[j] = tempNode[j - 1];
+            tempNode[i] = x;
+            // inserted element in its rightful position;
+
+            newLeaf->isLeaf = true;
+            current->size = (bucketSize + 0) / 2;
+            newLeaf->size = (bucketSize + 1) - (bucketSize + 1) / 2  ; // now rearrangement begins!
+
+            current->ptr[current->size] = newLeaf;
+            newLeaf->ptr[newLeaf->size] = current->ptr[bucketSize];
+
+            current->ptr[newLeaf->size] = current->ptr[bucketSize];
+            current->ptr[bucketSize] = NULL;
+
+            for (int i = 0; i < current->size; i++)
+                current->key[i] = tempNode[i];
+
+            for (int i = 0, j = current->size;
+                 i < newLeaf->size; i++, j++)
+                newLeaf->key[i] = tempNode[j];
+
+            // if this is root, then fine,
+            // else we neeThank you for your time and attention.d to increase the height of tree;
+            if (current == root) {
+                node* newRoot = new node;
+                newRoot->key[0] = newLeaf->key[0];
+                newRoot->ptr[0] = current;
+                newRoot->ptr[1] = newLeaf;
+                newRoot->isLeaf = false;
+                newRoot->size = 1;
+                root = newRoot;
+            }
+            else
+                shiftLevel(
+                    newLeaf->key[0], parent,
+                    newLeaf); // parent->original root
+        }
+    }
+}
+
+void Btree::shiftLevel(int x, node* current, node* child)
+{ // insert or create an internal node;
+    if (current->size
+        < bucketSize) { // if can fit in this level, do that
+        int i = 0;
+        while (x > current->key[i] && i < current->size)
+            i++;
+        for (int j = current->size; j > i; j--)
+            current->key[j] = current->key[j - 1];
+
+        for (int j = current->size + 1; j > i + 1; j--)
+            current->ptr[j] = current->ptr[j - 1];
+
+        current->key[i] = x;
+        current->size++;
+        current->ptr[i + 1] = child;
+    }
+
+    // shift up
+    else {
+        node* newInternal = new node;
+        int tempKey[bucketSize + 1];
+        node* tempPtr[bucketSize + 2];
+
+        for (int i = 0; i < bucketSize; i++)
+            tempKey[i] = current->key[i];
+
+        for (int i = 0; i < bucketSize + 1; i++)
+            tempPtr[i] = current->ptr[i];
+
+        int i = 0;
+        while (x > tempKey[i] && i < bucketSize)
+            i++;
+
+        for (int j = bucketSize + 1; j > i; j--)
+            tempKey[j] = tempKey[j - 1];
+
+        tempKey[i] = x;
+        for (int j = bucketSize + 2; j > i + 1; j--)
+            tempPtr[j] = tempPtr[j - 1];
+
+        tempPtr[i + 1] = child;
+        newInternal->isLeaf = false;
+        current->size = (bucketSize + 1) / 2;
+
+        newInternal->size
+            = bucketSize - (bucketSize + 1) / 2;
+
+        for (int i = 0, j = current->size + 1;
+             i < newInternal->size; i++, j++)
+            newInternal->key[i] = tempKey[j];
+
+        for (int i = 0, j = current->size + 1;
+             i < newInternal->size + 1; i++, j++)
+            newInternal->ptr[i] = tempPtr[j];
+
+        if (current == root) {
+            node* newRoot = new node;
+            newRoot->key[0] = current->key[current->size];
+            newRoot->ptr[0] = current;
+            newRoot->ptr[1] = newInternal;
+            newRoot->isLeaf = false;
+            newRoot->size = 1;
+            root = newRoot;
+        }
+
+        else
+            shiftLevel(current->key[current->size],
+                       findParent(root, current),
+                       newInternal);
+    }
+}
+int Btree::search(int x)
+{
+    if (root == NULL)
+        return -1;
+
+    else {
+        node* current = root;
+        while (current->isLeaf == false) {
+            for (int i = 0; i < current->size; i++) {
+                if (x < current->key[i]) {
+                    current = current->ptr[i];
+                    break;
+                }
+
+                if (i == current->size - 1) {
+                    current = current->ptr[i + 1];
+                    break;
+                }
+            }
+        }
+
+        for (int i = 0; i < current->size; i++) {
+            if (current->key[i] == x) {
+                // cout<<"Key found "<<endl;
+                return 1;
+                // return;
+            }
+        }
+
+        // cout<<"Key not found"<<endl;
+        return 0;
+    }
+}
+
+// Print the tree
+void Btree::display(node* current)
+{
+    if (current == NULL)
+        return;
+    queue<node*> q;
+    q.push(current);
+   
+    while (!q.empty()) {
+        int l;
+        l = q.size();
+
+        for (int i = 0; i < l; i++) {
+            node* tNode = q.front();
+            q.pop();
+            
+            for (int j = 0; j < tNode->size; j++)
+                if (tNode != NULL)  cout << tNode->key[j] <<" ";
+           
+            for (int j = 0; j < tNode->size + 1; j++)
+                if (tNode->ptr[j] != NULL && tNode->isLeaf == false) q.push(tNode->ptr[j]); 
+
+            cout << "\t";
+        }
+        cout << endl;
+    }
+}
+
+node* Btree::findParent(node* current, node* child)
+{
+    node* parent;
+    if (current->isLeaf || (current->ptr[0])->isLeaf)
+        return NULL;
+
+    for (int i = 0; i < current->size + 1; i++) {
+        if (current->ptr[i] == child) {
+            parent = current;
+            return parent;
+        }
+        else {
+            parent = findParent(current->ptr[i], child);
+            if (parent != NULL)
+                return parent;
+        }
+    }
+    return parent;
+}
+
+vector<int> level_1_keys;
+vector<int> lev1_child_end_idx;
+vector<int> level_2_keys;
+vector<int> lev2_child_end_idx;
+vector<int> level_3_keys;
+vector<int> lev3_child_end_idx;
+vector<int> level_f_keys;
+
+
+void Btree::createLevelArray(node* current)
+{   
+    int ht_tree = 1;
+    queue<node*> q;
+    q.push(current);
+    while (!q.empty()) {
+        if(ht_tree == 1) { 
+            level_1_keys.clear();
+            lev1_child_end_idx.clear();}
+        if(ht_tree == 2) { 
+            level_2_keys.clear();
+            lev2_child_end_idx.clear(); }
+        if(ht_tree == 3) { 
+            level_3_keys.clear();
+            lev3_child_end_idx.clear(); }
+        if(ht_tree == 4 || ht_tree == 3) { level_f_keys.clear();  }
+
+        int l;
+        l = q.size();
+        cout<<"q size is "<<l<<endl;
+        int ch_idx = -1;
+        for (int i = 0; i < l; i++) {
+            node* tNode = q.front();
+            q.pop();
+            if(ht_tree == 1) level_1_keys.pb(-1);
+            if(ht_tree == 2) level_2_keys.pb(-1);
+            if(ht_tree == 3) level_3_keys.pb(-1);   
+            if(tNode->isLeaf == true) level_f_keys.pb(-1);
+
+            for (int j = 0; j < tNode->size; j++){
+                if(ht_tree == 1) level_1_keys.pb(tNode->key[j]);
+                if(ht_tree == 2) level_2_keys.pb(tNode->key[j]);
+                if(ht_tree == 3) level_3_keys.pb(tNode->key[j]);   
+                if(tNode->isLeaf == true) level_f_keys.pb(tNode->key[j]); 
+                }
+
+            if(ht_tree == 1 )cout<<"lev1 size "<<level_1_keys.size()<<" tNode size  "<<tNode->size<<endl;
+            for (int j = 0; j < tNode->size + 1; j++) {                    
+                if(tNode->ptr[j] != NULL )ch_idx += tNode->ptr[j]->size+1;
+                if(ht_tree == 1 )lev1_child_end_idx.pb(ch_idx);
+                if(ht_tree == 2 )lev2_child_end_idx.pb(ch_idx);
+                if(ht_tree == 3 )lev3_child_end_idx.pb(ch_idx);
+                if (tNode->ptr[j] != NULL && tNode->isLeaf == false) q.push(tNode->ptr[j]); }
+        }
+        ht_tree++;
+    }
+  
+}
+
+
+void saveArray(const std::string &filename, int arr[], int size) {
+    std::ofstream outFile(filename, std::ios::binary);
+    if (!outFile) {
+        std::cerr << "Error opening file for writing\n";
+        return;
+    }
+    outFile.write(reinterpret_cast<char*>(&size), sizeof(size));  // Save size
+    outFile.write(reinterpret_cast<char*>(arr), size * sizeof(int));  // Save array
+    outFile.close();
+}
+
+void loadArray(const std::string &filename, int *&arr, int &size) {
+    std::ifstream inFile(filename, std::ios::binary);
+    if (!inFile) {
+        std::cerr << "Error opening file for reading\n";
+        return;
+    }
+    // cout<<"file opened  file name  "<<filename<<endl;
+    inFile.read(reinterpret_cast<char*>(&size), sizeof(size));  
+    arr = (int*)malloc(size * sizeof(int)); 
+    inFile.read(reinterpret_cast<char*>(arr), size * sizeof(int)); 
+    inFile.close();
+}
+
+
+__device__ int* dev_l1keys = nullptr;
+__device__ int* dev_l2keys = nullptr;
+__device__ int* dev_l3keys = nullptr;
+__device__ int* dev_lfkeys = nullptr;
+__device__ int* dev_l1child_end_idx = nullptr;
+__device__ int* dev_l2child_end_idx = nullptr;
+__device__ int* dev_l3child_end_idx = nullptr;
+__device__ int l1_sz;
+
+__global__ void gpuInitKeys(int* l1keys, int* d_l1keys,int* l2keys, int* d_l2keys,int* l3keys, int* d_l3keys, int l1sz, int l2sz, int l3sz) {
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+    int totalThreads = gridDim.x * blockDim.x;
+
+    // Assign global pointer to the allocated memory
+    if (threadId == 0) {
+        dev_l1keys = d_l1keys;
+        dev_l2keys = d_l2keys; 
+        dev_l3keys = d_l3keys; }
+    __syncthreads();
+
+    // Copy elements in parallel
+    for(int i = threadId; i < l1sz; i += totalThreads) dev_l1keys[i] = l1keys[i];
+    for(int i = threadId; i < l2sz; i += totalThreads) dev_l2keys[i] = l2keys[i];
+    for(int i = threadId; i < l3sz; i += totalThreads) dev_l3keys[i] = l3keys[i];
+    __syncthreads();
+
+    // if (threadId == 0) {
+    //     printf("\nIn GPU, l2 size: %d\n", l2sz);
+    //     for (int i = l2sz-5; i < l2sz; i++) {
+    //         printf(" %d ", dev_l2keys[i]);
+    //     }
+    //     printf("\n");
+    // }
+}
+
+__global__ void gpuInitLfKs(int* lfkeys, int* d_lfkeys,int lfsz) {
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+    int totalThreads = gridDim.x * blockDim.x;
+
+    // Assign global pointer to the allocated memory
+    if (threadId == 0) {
+        dev_lfkeys = d_lfkeys; }
+    __syncthreads();
+
+    // Copy elements in parallel
+    for(int i = threadId; i < lfsz; i += totalThreads) dev_lfkeys[i] = lfkeys[i];
+    __syncthreads();
+
+    // if (threadId == 0) {
+    //     printf("\nIn GPU,leaf : %d\n", lfsz);
+    //     for (int i = lfsz-5; i < lfsz; i++) {
+    //         printf(" %d ", dev_lfkeys[i]);
+    //     }
+    //     printf("\n");
+    // }
+}
+
+__global__ void gpuInitChild(int* l1child, int* d_l1child,int* l2child, int* d_l2child,int* l3child, int* d_l3child, int l1sz, int l2sz, int l3sz) {
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+    int totalThreads = gridDim.x * blockDim.x;
+
+    // Assign global pointer to the allocated memory
+    if (threadId == 0) {
+        dev_l1child_end_idx = d_l1child;
+        dev_l2child_end_idx = d_l2child; 
+        dev_l3child_end_idx = d_l3child; }
+    __syncthreads();
+
+    // Copy elements in parallel
+    for(int i = threadId; i < l1sz; i += totalThreads) dev_l1child_end_idx[i] = l1child[i];
+    for(int i = threadId; i < l2sz; i += totalThreads) dev_l2child_end_idx[i] = l2child[i];
+    for(int i = threadId; i < l3sz; i += totalThreads) dev_l3child_end_idx[i] = l3child[i];
+    __syncthreads();
+
+    // if (threadId == 0) {
+    //     printf("\nIn GPU, child %d\n", l3sz);
+    //     for (int i = l3sz-5; i < l3sz; i++) {
+    //         printf(" %d ", dev_l3child_end_idx[i]);
+    //     }
+    //     printf("\n");
+    // }
+}
+
+__global__ void printLevels(int l1sz, int l2sz, int l3sz){
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+     if(threadId == 0){
+        printf("\n lev1 \n");
+        for(int i = 0; i< l1sz; i++) printf(" %d ",dev_l1keys[i]);
+        printf("\n lev1 ch \n ");
+        for(int i = 0; i< l1sz; i++) printf(" %d ",dev_l1child_end_idx[i]);
+        printf("\n lev2 \n");
+        for(int i = l2sz-5; i< l2sz; i++) printf(" %d ",dev_l2keys[i]);
+        printf("\n lev2 ch \n");
+        for(int i = l2sz-5; i< l2sz; i++) printf(" %d ",dev_l2child_end_idx[i]);
+        printf("\nlev3 \n");
+        for(int i = l3sz-5; i< l3sz; i++) printf(" %d ",dev_l3keys[i]);
+        printf("\nlev3 ch \n");
+        for(int i = l3sz-5; i< l3sz; i++) printf(" %d ",dev_l3child_end_idx[i]);
+        printf("\n");
+    }
+}
+__global__ void printLeaf(int lfsz){
+    int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+     if(threadId == 0){
+        printf("\nleaf \n");
+        for(int i = lfsz-5; i< lfsz; i++) printf(" %d ",dev_lfkeys[i]);
+        printf("\n");
+    }
+}
+
+
+void makeIndexLevels(int num_keys, string str){
+    Btree nde;
+    for (int i = 1; i <= num_keys; i++) nde.insert(i);
+    node* root = nde.getRoot();
+    // nde.display(root);
+    nde.createLevelArray(root);
+    saveArray("dat_files/lev1_keys_"+str+".dat", level_1_keys.data(), level_1_keys.size());
+    saveArray("dat_files/lev2_keys_"+str+".dat", level_2_keys.data(), level_2_keys.size());
+    saveArray("dat_files/lev3_keys_"+str+".dat", level_3_keys.data(), level_3_keys.size());
+    saveArray("dat_files/leaf_keys_"+str+".dat", level_f_keys.data(), level_f_keys.size());
+    saveArray("dat_files/lev1_indx_"+str+".dat", lev1_child_end_idx.data(), lev1_child_end_idx.size());
+    saveArray("dat_files/lev2_indx_"+str+".dat", lev2_child_end_idx.data(), lev2_child_end_idx.size());
+    saveArray("dat_files/lev3_indx_"+str+".dat", lev3_child_end_idx.data(), lev3_child_end_idx.size());
+    cout<<"lev1 size "<<level_1_keys.size()<<"  lev2 size "<<level_2_keys.size()<<"  lev3 size "<<level_3_keys.size()<<"  leaf size "<<level_f_keys.size()<<endl;
+}
+
+void storeDataDevice(string str){
+
+    cudaEvent_t startc, stopc;
+    cudaEventCreate(&startc);
+    cudaEventCreate(&stopc);
+    auto start = std::chrono::high_resolution_clock::now();
+    cudaEventRecord(startc, 0);
+
+    int l1sz, l2sz, l3sz, lfsz;
+    int* h_l1keys;
+    int* h_l2keys;
+    int* h_l3keys;
+    int* h_lfkeys;
+    int* h_l1chid;
+    int* h_l2chid;
+    int* h_l3chid;
+
+    loadArray("abbig_data_files/lev1_keys_"+str+".dat", h_l1keys, l1sz);
+    loadArray("abbig_data_files/lev2_keys_"+str+".dat", h_l2keys, l2sz);
+    loadArray("abbig_data_files/lev3_keys_"+str+".dat", h_l3keys, l3sz);
+    loadArray("abbig_data_files/leaf_keys_"+str+".dat", h_lfkeys, lfsz);
+    loadArray("abbig_data_files/lev1_indx_"+str+".dat", h_l1chid, l1sz);
+    loadArray("abbig_data_files/lev2_indx_"+str+".dat", h_l2chid, l2sz);
+    loadArray("abbig_data_files/lev3_indx_"+str+".dat", h_l3chid, l3sz);
+    cout<<"l1sz "<<l1sz<<" , l2sz "<<l2sz<<"  l3sz "<<l3sz<<"  lfsz "<<lfsz<<endl;
+
+    int tot_size = (2*(l1sz + l2sz + l3sz) + lfsz )*sizeof(int);
+    cout<<"total size "<<tot_size/(1024*1024)<<"MB"<<endl;
+
+
+
+    int* d_l1keys;
+    int* d_l2keys;
+    int* d_l3keys;
+    int* d_lfkeys;
+    int* d_l1chid;
+    int* d_l2chid;
+    int* d_l3chid;
+
+    cudaMalloc((void**)&d_l1keys, l1sz*sizeof(int));
+    cudaMalloc((void**)&d_l2keys, l2sz*sizeof(int));
+    cudaMalloc((void**)&d_l3keys, l3sz*sizeof(int));
+    cudaMalloc((void**)&d_lfkeys, lfsz*sizeof(int));
+    cudaMalloc((void**)&d_l1chid, l1sz*sizeof(int));
+    cudaMalloc((void**)&d_l2chid, l2sz*sizeof(int));
+    cudaMalloc((void**)&d_l3chid, l3sz*sizeof(int));
+
+    cudaMemcpy(d_l1keys, h_l1keys, l1sz*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_l2keys, h_l2keys, l2sz*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_l3keys, h_l3keys, l3sz*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_lfkeys, h_lfkeys, lfsz*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_l1chid, h_l1chid, l1sz*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_l2chid, h_l2chid, l2sz*sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_l3chid, h_l3chid, l3sz*sizeof(int), cudaMemcpyHostToDevice);
+
+    int* d_dev_l1keys;
+    int* d_dev_l2keys;
+    int* d_dev_l3keys;
+    int* d_dev_lfkeys;
+    int* d_dev_l1chid;
+    int* d_dev_l2chid;
+    int* d_dev_l3chid;
+
+    cudaMalloc((void**)&d_dev_l1keys, l1sz*sizeof(int));
+    cudaMalloc((void**)&d_dev_l2keys, l2sz*sizeof(int));
+    cudaMalloc((void**)&d_dev_l3keys, l3sz*sizeof(int));
+    cudaMalloc((void**)&d_dev_lfkeys, lfsz*sizeof(int));
+    cudaMalloc((void**)&d_dev_l1chid, l1sz*sizeof(int));
+    cudaMalloc((void**)&d_dev_l2chid, l2sz*sizeof(int));
+    cudaMalloc((void**)&d_dev_l3chid, l3sz*sizeof(int));
+
+    cudaMemcpyToSymbol(dev_l1keys, &d_dev_l1keys, sizeof(int*));
+    cudaMemcpyToSymbol(dev_l2keys, &d_dev_l2keys, sizeof(int*));
+    cudaMemcpyToSymbol(dev_l3keys, &d_dev_l3keys, sizeof(int*));
+    cudaMemcpyToSymbol(dev_lfkeys, &d_dev_lfkeys, sizeof(int*));
+    cudaMemcpyToSymbol(dev_l1child_end_idx, &d_dev_l1chid, sizeof(int*));
+    cudaMemcpyToSymbol(dev_l2child_end_idx, &d_dev_l2chid, sizeof(int*));
+    cudaMemcpyToSymbol(dev_l3child_end_idx, &d_dev_l3chid, sizeof(int*));
+
+    int threadPerBlock = 256;
+    int numBlocks = (l3sz + threadPerBlock - 1) / threadPerBlock;
+    gpuInitKeys<<<numBlocks, threadPerBlock>>>(d_l1keys, d_dev_l1keys, d_l2keys, d_dev_l2keys, d_l3keys, d_dev_l3keys, l1sz, l2sz, l3sz);
+    cudaDeviceSynchronize();
+    gpuInitChild<<<numBlocks, threadPerBlock>>>(d_l1chid, d_dev_l1chid, d_l2chid, d_dev_l2chid, d_l3chid, d_dev_l3chid, l1sz, l2sz, l3sz);
+    cudaDeviceSynchronize();
+    numBlocks = 100; //(lfsz + threadPerBlock - 1) / threadPerBlock;
+    gpuInitLfKs<<<numBlocks, threadPerBlock>>>(d_lfkeys, d_dev_lfkeys, lfsz);
+    cudaDeviceSynchronize();
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> duration = end - start;
+    std::cout << "reading and copy time chron: " << duration.count() << " miliseconds" << std::endl;
+    cudaEventRecord(stopc);
+    cudaEventSynchronize(stopc);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, startc, stopc);
+    std::cout << "reading and copy time cuda : " << milliseconds << " ms" << std::endl;   
+
+
+    cudaFree(d_l1keys);
+    cudaFree(d_l2keys);
+    cudaFree(d_l3keys);
+    cudaFree(d_l1chid);
+    cudaFree(d_l2chid); 
+    cudaFree(d_l3chid);
+
+    cudaFree(d_dev_l1keys);
+    cudaFree(d_dev_l2keys);
+    cudaFree(d_dev_l3keys);
+    cudaFree(d_dev_l1chid);
+    cudaFree(d_dev_l2chid);
+    cudaFree(d_dev_l3chid);
+
+    delete[] h_l1keys;
+    delete[] h_l2keys;
+    delete[] h_l3keys;
+    delete[] h_l1chid;
+    delete[] h_l2chid;
+    delete[] h_l3chid;
+
+    level_1_keys.resize(0);
+    level_2_keys.resize(0);
+    level_3_keys.resize(0);
+    level_f_keys.resize(0);
+    lev1_child_end_idx.resize(0);
+    lev2_child_end_idx.resize(0);
+    lev3_child_end_idx.resize(0);
+
+
+    return ;
+
+}
+
+int main()
+{
+    ios_base::sync_with_stdio(false);
+    string str[12] = { "5mil","10mil", "5cr", "10cr","15cr", "20cr", "25cr", "30cr","50cr", "100cr","150cr", "200cr"};  
+    // cout<<"str_lev_ser_32"<<endl;              //size  250 1mil 1cr 5cr 10cr 50cr
+    int num_keys[12] = { 5000000, 10000000, 50000000, 100000000,150000000,200000000,250000000,300000000, 500000000, 1000000000, 1500000000,2000000000 };                //strn  2hn 1mil 1cr 5cr 10cr 50cr
+    int idx =1;
+    for(int i = idx; i<idx+1; i++){
+        cout<<" ster serch "<<str[i]<<endl;
+        makeIndexLevels(num_keys[i], str[i]);
+        storeDataDevice(str[i]);
+    }
+    return 0;
+}
